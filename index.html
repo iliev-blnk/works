@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ilie Beleniuc — works</title>
+<meta name="description" content="Tools for live shows, visuals and data by Ilie Beleniuc, full-stack developer.">
+<meta property="og:title" content="Ilie Beleniuc — works">
+<meta property="og:description" content="Tools for live shows, visuals and data.">
+<meta property="og:image" content="https://iliev-blnk.github.io/works/media/throw-poster.jpg">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #fff; color: #111; font: 16px/1.55 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+  a { color: inherit; text-underline-offset: 3px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+  header.wrap { padding-top: 40px; padding-bottom: 28px; }
+  h1 { font-size: 16px; font-weight: 600; }
+  header p { color: #555; }
+  .stage { background: #000; }
+  .stage .frame { max-width: 1280px; margin: 0 auto; aspect-ratio: 16 / 9; position: relative; }
+  .stage iframe, .stage video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  .stage video { display: none; }
+  @media (max-width: 700px) {
+    .stage iframe { display: none; }
+    .stage video { display: block; }
+  }
+  .caption { padding: 12px 0 0; color: #555; }
+  ul { list-style: none; padding: 0; margin: 40px 0 56px; display: grid; gap: 26px; }
+  li h2 { font-size: 16px; font-weight: 600; }
+  li p { color: #333; }
+  li .links { color: #555; }
+  li .links a { margin-right: 14px; white-space: nowrap; }
+  footer { color: #555; padding: 0 0 48px; }
+  footer .links a { margin-right: 14px; }
+</style>
+</head>
+<body>
+<header class="wrap">
+  <h1>Ilie Beleniuc</h1>
+  <p>Full-stack developer. I build tools for live shows, visuals and data.</p>
+</header>
+
+<section class="stage" aria-label="throw: live demo of the 3D previs">
+  <div class="frame">
+    <iframe src="https://iliev-blnk.github.io/throw/previs.html?demo" title="throw previs: a projection-mapped wall and boxes with moving-head beams" loading="lazy" allow="fullscreen"></iframe>
+    <video src="media/throw-previs.mp4" poster="media/throw-poster.jpg" muted loop playsinline autoplay preload="none" aria-label="throw demo video"></video>
+  </div>
+</section>
+
+<main class="wrap">
+  <p class="caption">Running live above: <strong>throw</strong>, a projection-mapped wall and three boxes with moving heads in haze, following a 124 BPM beat. Drag to look around.</p>
+
+  <ul>
+    <li>
+      <h2>throw</h2>
+      <p>Live visuals, projection mapping and light sync for small venues. Two decks of sound-reactive shader scenes, any number of projectors pinned by their corners on the wall, Art-Net out to lights and moving heads, a phone remote and a 3D previs. Runs in a browser on one laptop with no internet.</p>
+      <p class="links"><a href="https://iliev-blnk.github.io/throw/">open the app</a><a href="https://github.com/iliev-blnk/throw">source</a><a href="media/throw-previs.mp4">video with sound</a></p>
+    </li>
+    <li>
+      <h2>crayon gang</h2>
+      <p>Cats and dogs in sweaters, drawn stroke by stroke like felt crayon on paper. Procedural: every one is new.</p>
+      <p class="links"><a href="crayon/">draw some</a></p>
+    </li>
+    <li>
+      <h2>pagereel</h2>
+      <p>Renders any web page to frame-exact video. The throw demo video is made with it.</p>
+      <p class="links"><a href="https://iliev-blnk.github.io/pagereel/">gallery</a><a href="https://github.com/iliev-blnk/pagereel">source</a><a href="https://www.npmjs.com/package/pagereel">npm</a></p>
+    </li>
+    <li>
+      <h2>pagepad</h2>
+      <p>Turns a phone into a remote for any web page by scanning a QR code. throw's phone remote runs on it.</p>
+      <p class="links"><a href="https://pagepad-demo.pagepad.workers.dev">demo</a><a href="https://github.com/iliev-blnk/pagepad">source</a></p>
+    </li>
+    <li>
+      <h2>holdshort</h2>
+      <p>A live digital twin of Istanbul Airport's airspace from open ADS-B data, with landing-time predictions. Rust, Python and TypeScript.</p>
+      <p class="links"><a href="https://holdshort.pages.dev">console</a><a href="https://github.com/iliev-blnk/holdshort">source</a></p>
+    </li>
+    <li>
+      <h2>Bible Presenter</h2>
+      <p>A desktop app for projecting scripture in church: the operator stages a verse on the laptop, the projector shows it full screen, with Romanian, Russian, Turkish and English side by side. Electron, works offline.</p>
+    </li>
+  </ul>
+</main>
+
+<footer class="wrap">
+  <p>Also: <a href="https://iliev-blnk.github.io/grid.md/">grid.md</a> forecasts Moldova's electricity demand a day ahead. <a href="https://iliev-blnk.github.io/cutline/">cutline</a> simulates the Champions League season.</p>
+  <p class="links" style="margin-top:14px"><a href="https://github.com/iliev-blnk">GitHub</a></p>
+</footer>
+</body>
+</html>

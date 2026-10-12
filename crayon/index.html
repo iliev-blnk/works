@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crayon gang</title>
+<meta name="description" content="Cats and dogs in sweaters, drawn stroke by stroke like felt crayon on paper. Procedural, p5.js.">
+<script src="https://cdn.jsdelivr.net/npm/p5@1.11.1/lib/p5.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #fff; color: #111; font: 15px/1.5 system-ui, sans-serif; padding: 24px 16px; }
+  header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  header a { color: #666; }
+  .hero { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+  #gang canvas { display: block; height: min(calc(100vh - 110px), 1000px) !important; width: auto !important; max-width: 100%; cursor: pointer; }
+  aside { display: flex; flex-direction: column; gap: 14px; flex: 1 1 220px; max-width: 320px; }
+  aside div { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  aside b { color: #666; font-weight: 400; width: 100%; }
+  button { background: none; border: 0; color: #666; font: inherit; cursor: pointer; padding: 0; }
+  button:hover { color: #111; }
+  button.on { color: #111; text-decoration: underline; text-underline-offset: 3px; }
+  #gang-status { color: #666; min-height: 1.5em; }
+  @media (max-width: 700px) { #gang canvas { height: auto !important; width: 100% !important; } }
+</style>
+</head>
+<body>
+<header><strong>crayon gang</strong><a href="../">← works</a></header>
+<div class="hero">
+  <div id="gang"></div>
+  <aside>
+    <p>Cats and dogs in sweaters, drawn stroke by stroke like felt crayon on paper. Every one is new; nothing is a stored image.</p>
+    <div><b>who</b><button data-who="cats">cats</button><button data-who="dogs">dogs</button><button data-who="mixed" class="on">mixed</button></div>
+    <div><b>shot</b><button data-shot="gang" class="on">lineup</button><button data-shot="portrait">portrait</button></div>
+    <div><b>smoke</b><button data-smoke="1" class="on">on</button><button data-smoke="0">off</button></div>
+    <div><b>export</b><button id="gang-new">new one</button><button id="gang-png">save png</button></div>
+    <div id="gang-status"></div>
+  </aside>
+</div>
+<script>
+const sketches = {}, lazy = {};
+// crayon gang: cats and dogs in sweaters, drawn stroke by stroke like felt crayon on paper
+(() => {
+const el = document.getElementById('gang'), status = document.getElementById('gang-status');
+const W = 1080, H = 1080, TAU = Math.PI * 2, DOWN = Math.PI / 2;
+const opt = { who: 'mixed', shot: 'gang', smoke: true };
+let rng = Math.random, ops = [], total = 0, ctx, P5, U = 4;
+const rnd = (a, b) => a + rng() * (b - a);
+const pick = a => a[Math.floor(rng() * a.length)];
+const chance = q => rng() < q;
+const clamp = v => Math.max(0, Math.min(100, v));
+const mulberry = s => () => {
+  s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296;
+};
+const rgba = (h, s, b, a) => {
+  h = (h % 360 + 360) % 360; s /= 100; b /= 100;
+  const f = n => { const k = (n + h / 60) % 6; return Math.round(255 * b * (1 - s * Math.max(0, Math.min(k, 4 - k, 1)))); };
+  return `rgba(${f(5)},${f(3)},${f(1)},${a.toFixed(2)})`;
+};
+const shade = ([h, s, b], db, ds = 0) => [h, clamp(s + ds), clamp(b + db)];
+
+// shapes: f(x, y) tests inside, b is the bounding box
+const ell = (cx, cy, rx, ry, rot = 0) => {
+  const c = Math.cos(rot), s = Math.sin(rot), m = Math.max(rx, ry);
+  return { f: (x, y) => { const dx = x - cx, dy = y - cy, a = dx * c + dy * s, b = dy * c - dx * s; return a * a / (rx * rx) + b * b / (ry * ry) <= 1; },
+           b: [cx - m, cy - m, cx + m, cy + m] };
+};
+const poly = pts => {
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), n = pts.length;
+  return { f: (x, y) => {
+    let inn = false;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inn = !inn;
+    }
+    return inn;
+  }, b: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+};
+const or = (...sh) => ({ f: (x, y) => sh.some(s => s.f(x, y)),
+  b: [0, 1, 2, 3].map(i => (i < 2 ? Math.min : Math.max)(...sh.map(s => s.b[i]))) });
+const and = (a, b) => ({ f: (x, y) => a.f(x, y) && b.f(x, y),
+  b: [Math.max(a.b[0], b.b[0]), Math.max(a.b[1], b.b[1]), Math.min(a.b[2], b.b[2]), Math.min(a.b[3], b.b[3])] });
+const minus = (a, b) => ({ f: (x, y) => a.f(x, y) && !b.f(x, y), b: a.b });
+
+// local frame: (0, 0) at ox, oy, one unit = u px, flip mirrors x
+const frame = (ox, oy, u, flip = 1) => {
+  const X = v => ox + v * u * flip, Y = v => oy + v * u;
+  const pts = a => { const r = []; for (let i = 0; i < a.length; i += 2) r.push([X(a[i]), Y(a[i + 1])]); return r; };
+  return { X, Y, u, flip, pts,
+    P: (...a) => poly(pts(a)),
+    E: (x, y, rx, ry, rot = 0) => ell(X(x), Y(y), rx * u, ry * u, rot * flip),
+    R: (x0, y0, x1, y1) => poly(pts([x0, y0, x1, y0, x1, y1, x0, y1])) };
+};
+
+// lay crayon strokes inside a shape; d = strokes per unit², fringe = share of hairs pushed out past the edge
+function fill(sh, [h, s, b], o = {}) {
+  const { d = 9, len = [0.5, 1.45], w = [0.2, 0.42], dir = null, spread = TAU, jit = [4, 7, 9],
+          a = [0.5, 0.85], fringe = 0.15, flen = 1.8, wob = 0.6 } = o;
+  const u = U, k = Math.min(U, 7), [x0, y0, x1, y1] = sh.b;
+  if (x1 <= x0 || y1 <= y0) return;
+  let hit = 0;
+  for (let i = 0; i < 400; i++) if (sh.f(rnd(x0, x1), rnd(y0, y1))) hit++;
+  const count = Math.round((x1 - x0) * (y1 - y0) * hit / 400 / (k * k) * d);
+  if (!count) return;
+  const cols = Array.from({ length: 24 }, () => rgba(h + rnd(-jit[0], jit[0]), clamp(s + rnd(-jit[1], jit[1])), clamp(b + rnd(-jit[2], jit[2])), rnd(...a)));
+  // light colours vanish on white paper, so their edge hairs get a grey shadow
+  const edge = b > 82 && s < 30 ? Array.from({ length: 8 }, () => rgba(h, s + 6, b - rnd(28, 40), rnd(0.35, 0.6))) : null;
+  const ns = rng() * 999, wb = wob * u;
+  const inside = (x, y) => sh.f(x + (P5.noise(x * .02, y * .02, ns) - .5) * 2 * wb, y + (P5.noise(x * .02 + 31, y * .02, ns) - .5) * 2 * wb);
+  const pt = () => {
+    for (let t = 0; t < 60; t++) { const x = rnd(x0 - wb, x1 + wb), y = rnd(y0 - wb, y1 + wb); if (inside(x, y)) return [x, y]; }
+    return null;
+  };
+  let left = count, hairs = Math.round(count * fringe);
+  total += count + hairs;
+  ops.push(() => {
+    for (let j = 0; j < 500 && left > 0; j++, left--) {
+      const q = pt(); if (!q) { left = 0; break; }
+      const ang = (dir === null ? 0 : typeof dir === 'function' ? dir(q[0], q[1]) : dir) + (rng() - .5) * spread;
+      const L = rnd(len[0], len[1]) * k / 2, dx = Math.cos(ang) * L, dy = Math.sin(ang) * L;
+      ctx.strokeStyle = cols[(rng() * cols.length) | 0]; ctx.lineWidth = rnd(w[0], w[1]) * k;
+      ctx.beginPath(); ctx.moveTo(q[0] - dx, q[1] - dy); ctx.lineTo(q[0] + dx, q[1] + dy); ctx.stroke();
+      done++;
+    }
+    for (let j = 0; j < 500 && left <= 0 && hairs > 0; j++) {
+      const q = pt(); if (!q) { hairs = 0; break; }
+      const ang = rng() * TAU, r = flen * k, c = Math.cos(ang), sn = Math.sin(ang);
+      if (inside(q[0] + c * r * .5, q[1] + sn * r * .5)) continue;
+      hairs--; done++;
+      const L = r * rnd(.5, 1.2);
+      ctx.strokeStyle = edge && chance(.5) ? pick(edge) : cols[(rng() * cols.length) | 0];
+      ctx.lineWidth = rnd(w[0], w[1]) * k * .7;
+      ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(q[0] + c * L, q[1] + sn * L); ctx.stroke();
+    }
+    return left <= 0 && hairs <= 0;
+  });
+}
+
+// wobbly crayon line through px points, gone over a few times
+function ink(pts, col = [25, 30, 12], o = {}) {
+  const { w = [0.16, 0.36], passes = 3, jit = 0.15, a = [0.45, 0.85] } = o;
+  const u = U, cols = Array.from({ length: 8 }, () => rgba(col[0], col[1], clamp(col[2] + rnd(-6, 6)), rnd(...a)));
+  total += passes * pts.length;
+  ops.push(() => {
+    for (let k = 0; k < passes; k++) {
+      const ox = rnd(-1, 1) * jit * u, oy = rnd(-1, 1) * jit * u;
+      for (let i = 1; i < pts.length; i++) {
+        ctx.strokeStyle = cols[(rng() * cols.length) | 0]; ctx.lineWidth = rnd(w[0], w[1]) * u;
+        ctx.beginPath();
+        ctx.moveTo(pts[i - 1][0] + ox + rnd(-.1, .1) * u, pts[i - 1][1] + oy + rnd(-.1, .1) * u);
+        ctx.lineTo(pts[i][0] + ox + rnd(-.1, .1) * u, pts[i][1] + oy + rnd(-.1, .1) * u);
+        ctx.stroke(); done++;
+      }
+    }
+    return true;
+  });
+}
+const curve = (f, a, b, n = 24) => Array.from({ length: n + 1 }, (_, i) => f(a + (b - a) * i / n));
+const radial = (cx, cy) => (x, y) => Math.atan2(y - cy, x - cx);
+let done = 0;
+
+// ---------- palettes (HSB) ----------
+const FUR_CAT = [
+  { fur: [28, 72, 84], mark: 'tabby' }, { fur: [36, 30, 92], mark: 'tabby' }, { fur: [225, 18, 16], mark: 'tux' },
+  { fur: [220, 8, 58], mark: 'tabby' }, { fur: [40, 7, 95], mark: 'patch' }, { fur: [26, 45, 52], mark: 'tabby' },
+  { fur: [225, 18, 16], mark: 'plain' },
+];
+const DOGS = [
+  { fur: [32, 58, 74], snout: [40, 8, 95], ear: [24, 62, 40], ears: 'flop' },            // beagle
+  { fur: [230, 20, 16], snout: [230, 18, 22], ear: [228, 14, 28], ears: 'flop' },        // black lab
+  { fur: [215, 6, 52], snout: [40, 5, 90], ear: [215, 8, 40], ears: 'fold', beard: true }, // schnauzer
+  { fur: [24, 72, 82], snout: [38, 14, 95], ear: [24, 72, 78], ears: 'up' },             // shiba
+  { fur: [40, 7, 95], snout: [40, 7, 95], ear: [40, 9, 90], ears: 'flop' },              // white poodle
+  { fur: [18, 62, 44], snout: [22, 55, 52], ear: [16, 66, 30], ears: 'flop' },           // dachshund
+  { fur: [40, 6, 95], snout: [40, 6, 95], ear: [22, 62, 48], ears: 'flop', patch: true }, // spaniel
+];
+const KNIT = [[222, 78, 74], [4, 76, 80], [140, 58, 44], [42, 82, 88], [228, 62, 40], [42, 16, 92],
+              [12, 62, 64], [185, 62, 52], [350, 42, 88], [100, 35, 55], [210, 55, 85]];
+const PANTS = [[25, 45, 32], [230, 15, 16], [225, 45, 32], [38, 35, 62], [220, 8, 45], [140, 40, 28]];
+const SHIRT = [[205, 22, 92], [42, 8, 97], [42, 8, 97], [195, 30, 85]];
+
+function spec(kind) {
+  const sweater = pick(KNIT); let accent = pick(KNIT);
+  while (accent === sweater) accent = pick(KNIT);
+  const base = kind === 'cat' ? { ...pick(FUR_CAT) } : { ...pick(DOGS) };
+  return { kind, ...base, sweater, accent, third: pick(KNIT), pants: pick(PANTS), shirt: pick(SHIRT),
+    shoes: chance(.7) ? [20, 25, 13] : [22, 55, 35],
+    knit: pick(['plain', 'stripes', 'yoke', 'vneck', 'dots', 'fairisle', 'stripes']),
+    hat: chance(.3) ? pick(['beret', 'beanie', 'beanie']) : null,
+    smokes: opt.smoke && chance(.55), side: chance(.5) ? 1 : -1, eye: pick([[70, 70, 80], [52, 80, 88], [95, 55, 70], [40, 70, 85]]),
+    mood: rnd(0.35, 0.75) };
+}
+
+// ---------- heads (head centre at hx, hy) ----------
+function catHead(hx, hy, u, sp) {
+  U = u; const f = frame(hx, hy, u), fur = sp.fur, dark = shade(fur, fur[2] < 30 ? -6 : -22, 8);
+  for (const s of [-1, 1]) fill(f.P(s * 14.5, -3, s * 13, -20, s * 3, -10.5), fur, { fringe: .3 });
+  fill(f.E(0, 0, 15.5, 12.5), fur, { dir: radial(hx, hy + 3 * u), spread: 1.3, fringe: .35, flen: 2.2 });
+  for (const s of [-1, 1]) fill(f.P(s * 12.6, -6, s * 12, -16.5, s * 6.5, -10.5), [355, 38, 88], { d: 8, fringe: 0 });
+  if (sp.mark === 'tabby') {
+    for (const x of [-3, 0, 3]) fill(f.E(x, -9.5, .9, 2.6, x * .06), dark, { d: 10, fringe: 0, dir: DOWN, spread: .5 });
+    for (const s of [-1, 1]) for (const y of [0, 3]) fill(f.E(s * 14, y, 2.4, .7, s * .15), dark, { d: 10, fringe: 0, dir: 0, spread: .4 });
+  }
+  if (sp.mark === 'patch') fill(f.E(-7, -6, 7, 6, .4), [28, 65, 70], { fringe: .1 });
+  if (sp.mark === 'tux' || sp.mark === 'patch' || chance(.3)) fill(f.E(0, 6, 7, 5), [40, 6, 95], { fringe: .2 });
+  // half-shut eyes, lids level or sloping in for the grump
+  for (const s of [-1, 1]) {
+    const ex = s * 6, ey = -1, eye = f.E(ex, ey, 2.9, 1.8, s * .1);
+    fill(eye, sp.eye, { d: 22, len: [.4, 1], fringe: 0 });
+    fill(f.E(ex + s * .2, ey + .3, .5, 1.2), [0, 0, 8], { d: 30, len: [.3, .8], fringe: 0 });
+    const lid = ey - 1.9 + sp.mood * 2.2;
+    fill(and(f.E(ex, ey, 3.3, 2.3, s * .1), f.R(-20, -10, 20, lid - s * 0)), shade(fur, -8), { d: 22, len: [.4, 1.1], fringe: 0 });
+    ink(f.pts([ex - 3.3, lid + s * .5, ex + 3.3, lid - s * .5]), [25, 30, 10], { w: [.3, .5] });
+    ink(curve(t => [f.X(ex + Math.cos(t) * 3), f.Y(ey + Math.sin(t) * 1.9)], .2, Math.PI - .2, 10), [25, 30, 15], { w: [.12, .25], passes: 2 });
+  }
+  fill(f.P(-1.8, 2.6, 1.8, 2.6, 0, 4.5), [355, 45, 75], { d: 20, len: [.3, .9], fringe: 0 });
+  ink(f.pts([0, 4.5, 0, 5.6, -1.4, 6.7, -3, 6.1]), undefined, { w: [.14, .28], passes: 2 });
+  ink(f.pts([0, 5.6, 1.4, 6.7, 3, 6.1]), undefined, { w: [.14, .28], passes: 2 });
+  for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
+    const y0 = 4.4 + i * 1, y1 = 2.5 + i * 2.8 + rnd(-.6, .6), x1 = rnd(19, 23);
+    ink(curve(t => [f.X(s * (4.5 + (x1 - 4.5) * t)), f.Y(y0 + (y1 - y0) * t - Math.sin(t * Math.PI) * .8)], 0, 1, 10),
+      [25, 20, 14], { w: [.08, .16], passes: 2, a: [.4, .75] });
+  }
+  return { mouth: [3.4, 6.4] };
+}
+
+function dogHead(hx, hy, u, sp) {
+  U = u; const f = frame(hx, hy, u);
+  if (sp.ears === 'up') for (const s of [-1, 1]) {
+    fill(f.P(s * 13, -4, s * 11, -21, s * 3.5, -12), sp.ear, { fringe: .3 });
+    fill(f.P(s * 11.3, -7, s * 10.8, -17, s * 6.5, -11.5), [38, 14, 95], { d: 8, fringe: 0 });
+  }
+  fill(f.E(0, 0, 12.8, 14), sp.fur, { dir: radial(hx, hy + 2 * u), spread: 1.3, fringe: .35, flen: 2.2 });
+  if (sp.patch) fill(f.E(-5.5, -3, 4.5, 4, .3), sp.ear, { fringe: .1 });
+  fill(f.E(0, 7, 8, 6.3), sp.snout, { fringe: .2 });
+  if (sp.beard) {
+    fill(f.P(-8.5, 6, 8.5, 6, 7, 16, 0, 18.5, -7, 16), sp.snout, { dir: DOWN, spread: .5, len: [1.2, 2.8], fringe: .4, flen: 2.6 });
+    for (const s of [-1, 1]) fill(f.E(s * 5, -4.6, 3.6, 1.6, s * .25), sp.snout, { dir: s < 0 ? Math.PI : 0, spread: .8, len: [1, 2.2], fringe: .3 });
+  }
+  for (const s of [-1, 1]) {
+    fill(f.E(s * 5, -1.5, 1.6, 1.8), [0, 0, 6], { d: 30, len: [.3, .9], fringe: 0 });
+    fill(f.E(s * 5 - .5, -2.1, .4, .4), [0, 0, 98], { d: 40, len: [.2, .5], fringe: 0, a: [.7, .9] });
+    if (!sp.beard) ink(f.pts([s * 7.5, -4.4 + sp.mood, s * 2.8, -5.2 + sp.mood * .2]), [25, 30, 14], { w: [.2, .4] });
+  }
+  fill(f.E(0, 3.8, 3.3, 2.3), [0, 0, 7], { d: 26, len: [.3, 1], fringe: 0 });
+  if (!sp.beard) {
+    ink(f.pts([0, 6, 0, 8.2]), undefined, { w: [.15, .3], passes: 2 });
+    ink(curve(t => [f.X(t), f.Y(8.2 + t * t * .08)], -3.5, 3.5, 10), undefined, { w: [.15, .3], passes: 2 });
+  }
+  if (sp.ears === 'flop') for (const s of [-1, 1])
+    fill(f.E(s * 12.6, 2, 4.4, 10.5, -s * .22), sp.ear, { dir: DOWN, spread: .9, fringe: .3, flen: 2 });
+  if (sp.ears === 'fold') for (const s of [-1, 1])
+    fill(f.P(s * 12.5, -11, s * 6, -15, s * 11, -5.5), sp.ear, { fringe: .25 });
+  return { mouth: [3, sp.beard ? 9 : 8.4] };
+}
+
+function hat(hx, hy, u, sp) {
+  U = u; const f = frame(hx, hy, u, sp.side);
+  const top = sp.kind === 'cat' ? -12 : -13.5, col = pick(KNIT);
+  if (sp.hat === 'beret') {
+    fill(f.E(2.5, top + 1.6, 12.5, 4.4, .12), col, { dir: 0, spread: 1.2, fringe: .2 });
+    fill(f.E(4.5, top - 3, 1, 1.6), col, { fringe: .1 });
+  } else {
+    fill(and(f.E(0, top + 6, 16, 13), f.R(-20, top - 20, 20, top + 3)), col, { dir: DOWN, spread: .5, fringe: .2 });
+    fill(f.R(-16.5, top + 1, 16.5, top + 5.5), shade(col, -12), { dir: DOWN, spread: .25, d: 9, fringe: .2 });
+    fill(f.E(0, top - 8, 3.6, 3.4), pick(KNIT), { fringe: .6, flen: 2.4 });
+  }
+}
+
+function cigarette(x0, y0, ang, u, big) {
+  U = u; const L = 11 * u, th = .75 * u, c = Math.cos(ang), s = Math.sin(ang), nx = -s * th, ny = c * th;
+  const seg = (a, b) => poly([[x0 + c * L * a + nx, y0 + s * L * a + ny], [x0 + c * L * b + nx, y0 + s * L * b + ny],
+                                [x0 + c * L * b - nx, y0 + s * L * b - ny], [x0 + c * L * a - nx, y0 + s * L * a - ny]]);
+  fill(seg(0, .3), [30, 65, 82], { d: 30, len: [.3, .9], fringe: 0, wob: .15 });
+  fill(seg(.3, .94), [40, 4, 97], { d: 30, len: [.3, .9], fringe: 0, wob: .15 });
+  fill(seg(.92, 1), [8, 85, 90], { d: 40, len: [.2, .6], fringe: 0, wob: .1 });
+  for (const k of [1, -1]) ink([[x0 + nx * k, y0 + ny * k], [x0 + c * L + nx * k, y0 + s * L + ny * k]], [30, 10, 60], { w: [.08, .15], passes: 1 });
+  smoke(x0 + c * L, y0 + s * L, u, big);
+}
+
+// smoke: one wandering crayon line whose loops grow and drift as it rises
+function smoke(tx, ty, u, big) {
+  const n = big ? 900 : 300, rise = (big ? 30 : 30) * u, grow = big ? 7 : 2.4, ns = rng() * 99, pts = [];
+  let ph = rng() * TAU;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    ph += (big ? .16 : .09) + (P5.noise(ns, t * 9) - .3) * (big ? .5 : .25);
+    const r = (.3 + t * grow) * u * (.2 + 1.3 * P5.noise(ns + 5, t * 7));
+    const cx = tx + (P5.noise(ns + 9, t * 3) - .5) * (big ? 22 : 14) * u * t;
+    const cy = ty - Math.pow(t, .8) * rise + (P5.noise(ns + 13, t * 5) - .5) * 4 * u * t;
+    pts.push([cx + Math.cos(ph) * r, cy + Math.sin(ph) * r * (.5 + P5.noise(ns + 17, t * 4) * .6)]);
+  }
+  ink(pts, big ? [220, 10, 16] : [220, 5, 52], { w: big ? [.1, .24] : [.07, .16], passes: big ? 2 : 1, a: big ? [.3, .7] : [.25, .5], jit: .04 });
+}
+
+function head(hx, hy, u, sp, smoke) {
+  const m = (sp.kind === 'cat' ? catHead : dogHead)(hx, hy, u, sp);
+  if (sp.hat) hat(hx, hy, u, sp);
+  if (smoke) cigarette(hx + sp.side * m.mouth[0] * u, hy + m.mouth[1] * u, sp.side > 0 ? .25 : Math.PI - .25, u, false);
+}
+
+// ---------- sweaters ----------
+function knit(region, f, sp, chest) {
+  const band = (y0, y1, col, o = {}) => fill(and(region, f.R(-60, y0, 60, y1)), col, { dir: 0, spread: .8, fringe: 0, ...o });
+  const dots = (y, gap, col, r = 1) => { for (let x = -40; x <= 40; x += gap) { const e = f.E(x, y, r, r); fill(and(region, e), col, { d: 26, len: [.3, .9], fringe: 0, wob: .2 }); } };
+  if (sp.knit === 'stripes') for (let y = chest; y < chest + 50; y += 7) band(y, y + 3.2, sp.accent);
+  if (sp.knit === 'yoke') { band(chest, chest + 10, sp.accent, { dir: DOWN }); dots(chest + 5, 4, sp.third, .9); }
+  if (sp.knit === 'fairisle') { band(chest + 4, chest + 6, sp.accent); dots(chest + 9.5, 3.5, sp.third, 1); band(chest + 13, chest + 15, sp.accent); }
+  if (sp.knit === 'dots') for (let y = chest + 2, r = 0; y < chest + 46; y += 5.5, r++) dots(y, 6.5, sp.accent === sp.sweater ? [42, 8, 96] : [42, 8, 96], .9 + (r % 2) * 0);
+}
+function vneck(f, sp, top, depth, w) {
+  fill(f.P(-w, top, w, top, 0, top + depth), sp.shirt, { d: 10, fringe: 0 });
+  fill(minus(f.P(-w - 2.2, top, w + 2.2, top, 0, top + depth + 3.2), f.P(-w, top - 1, w, top - 1, 0, top + depth)), sp.accent, { d: 9, dir: DOWN, spread: .4, fringe: 0 });
+  fill(minus(f.P(-w - 1.2, top, w + 1.2, top, 0, top + depth + 1.8), f.P(-w - .5, top - 1, w + .5, top - 1, 0, top + depth + 1)), [42, 8, 96], { d: 12, fringe: 0, wob: .2 });
+}
+
+// ---------- full figure, feet at (cx, by) ----------
+function figure(cx, by, u, sp) {
+  U = u; const f = frame(cx, by, u);
+  fill(or(f.P(-13, -36, -.8, -36, -2, -4, -11.5, -4), f.P(.8, -36, 13, -36, 11.5, -4, 2, -4)), sp.pants, { dir: DOWN, spread: .6 });
+  fill(or(f.E(-7.5, -2.6, 6.6, 3.2, -.05), f.E(7.5, -2.6, 6.6, 3.2, .05)), sp.shoes, { dir: 0, spread: 1.5, fringe: .05 });
+  const body = or(f.P(-16, -72, 16, -72, 19, -63, 18.5, -30, -18.5, -30, -19, -63), f.E(-15, -66, 5, 6), f.E(15, -66, 5, 6));
+  fill(body, sp.sweater, { dir: DOWN, spread: 1.6, fringe: .2 });
+  knit(body, f, sp, -64);
+  if (sp.knit === 'vneck') vneck(f, sp, -73, 13, 6);
+  fill(and(body, f.R(-22, -34.5, 22, -28)), shade(sp.sweater, -14), { dir: DOWN, spread: .25, d: 9, fringe: .1 });
+  for (const s of [-1, 1]) {
+    const arm = f.P(s * 15, -71, s * 21, -70, s * 26.5, -44, s * 26, -38, s * 19.5, -38, s * 17.5, -52);
+    fill(arm, shade(sp.sweater, -13), { dir: DOWN, spread: 1.2, fringe: .2 });
+    if (sp.knit === 'stripes') knit(arm, f, sp, -64);
+    ink(f.pts([s * 17, -66, s * 17.8, -52, s * 19.8, -40]), shade(sp.sweater, -35), { w: [.2, .35], a: [.25, .45] });
+    fill(and(arm, f.R(-30, -42, 30, -36)), shade(sp.sweater, -18), { dir: DOWN, spread: .25, d: 9, fringe: .1 });
+    fill(f.E(s * 23, -35.2, 3.7, 3), sp.fur, { fringe: .3 });
+  }
+  head(cx, by - 81 * u, u * 1.25, sp, sp.smokes);
+}
+
+// ---------- portrait: one big bust with a raised paw ----------
+function portrait(sp) {
+  const u = W / 66, s = sp.side, hx = W / 2 - s * 1.5 * u, hy = H * .4; U = u;
+  const f = frame(hx, hy, u);
+  const body = or(f.P(-13, 9, 13, 9, 26, 15, 31, 70, -31, 70, -26, 15), f.E(-25, 26, 7, 10), f.E(25, 26, 7, 10));
+  fill(body, sp.sweater, { dir: DOWN, spread: 1.5, fringe: .2 });
+  if (sp.knit !== 'vneck' && sp.knit !== 'yoke' && sp.knit !== 'fairisle') knit(body, f, sp, 21);
+  vneck(f, sp, 8, 16, 8);
+  for (const k of [-1, 1]) {
+    fill(f.P(k * 8, 8, k * 1.2, 8, k * 4.3, 18), shade(sp.shirt, 3), { d: 14, fringe: 0, wob: .2 });
+    ink(f.pts([k * 8, 8, k * 4.3, 18, k * 1.2, 8]), [220, 20, 40], { w: [.08, .16], passes: 2 });
+  }
+  head(hx, hy, u, sp, false);
+  U = u;
+  if (sp.smokes || chance(.5)) {
+    const arm = f.P(s * 12.5, 24, s * 21, 17.5, s * 28, 36, s * 30, 70, s * 17, 70, s * 13.5, 44);
+    fill(arm, shade(sp.sweater, -13), { dir: -DOWN + s * .35, spread: 1.1, fringe: .2, d: 12, a: [.75, .95] });
+    ink(f.pts([s * 12.5, 25, s * 13.5, 44, s * 17, 70]), shade(sp.sweater, -40), { w: [.15, .3], a: [.3, .5] });
+    if (sp.knit === 'stripes') knit(arm, f, sp, 21);
+    fill(and(arm, f.R(-40, 15, 40, 26)), shade(sp.sweater, -22), { dir: DOWN, spread: .25, d: 12, fringe: .1 });
+    fill(f.E(s * 17, 19.5, 5, 4, s * .3), sp.fur, { fringe: .3 });
+    for (const k of [-1.6, .2, 2]) ink(f.pts([s * (15.5 + k), 17, s * (16.2 + k * 1.1), 19.6]), [25, 25, 18], { w: [.08, .16], passes: 2 });
+    if (sp.smokes) cigarette(f.X(s * 16.5), f.Y(17), s > 0 ? -1.05 : Math.PI + 1.05, u, true);
+  }
+}
+
+// ---------- compose ----------
+function compose() {
+  const seed = (Math.random() * 1e9) | 0;
+  rng = mulberry(seed); P5.noiseSeed(seed);
+  ops = []; total = 0; done = 0;
+  ctx.fillStyle = '#faf8f2'; ctx.fillRect(0, 0, W, H);
+  const kind = () => opt.who === 'mixed' ? pick(['cat', 'dog']) : opt.who.slice(0, -1);
+  if (opt.shot === 'portrait') portrait(spec(kind()));
+  else {
+    const n = pick([3, 4, 4, 5]), u = Math.min(W * .9 / (n * 45 + 12), 6), by = H * .5 + 54 * u;
+    const order = Array.from({ length: n }, (_, i) => i);
+    for (const i of order) {
+      const sp = spec(kind()), k = rnd(.9, 1.04);
+      figure(W / 2 + (i - (n - 1) / 2) * 45 * u + rnd(-1.5, 1.5) * u, by + rnd(-2, 2) * u, u * k, sp);
+    }
+  }
+  // paper tooth: tiny flecks of paper showing through the wax
+  ops.push(() => {
+    ctx.fillStyle = 'rgba(250,248,242,0.55)';
+    for (let i = 0; i < 26000; i++) ctx.fillRect(rng() * W, rng() * H, 1 + rng() * 1.6, 1 + rng() * 1.2);
+    return true;
+  });
+  P5.manual = false; P5.loop();
+}
+
+lazy.gang = () => sketches.gang = new p5(p => {
+  P5 = p;
+  p.setup = () => {
+    p.pixelDensity(1); p.createCanvas(W, H);
+    ctx = p.drawingContext; ctx.lineCap = 'round';
+    compose();
+  };
+  p.draw = () => {
+    const t0 = performance.now();
+    while (ops.length && performance.now() - t0 < 14) if (ops[0]()) ops.shift();
+    if (!ops.length) { status.textContent = 'done · click it for another'; p.manual = true; p.noLoop(); }
+    else status.textContent = `drawing ${Math.min(99, Math.round(done / total * 100))}%`;
+  };
+  p.reset = compose;
+}, el);
+
+el.addEventListener('click', () => sketches.gang && compose());
+document.getElementById('gang-new').addEventListener('click', () => sketches.gang && compose());
+document.getElementById('gang-png').addEventListener('click', () => sketches.gang && sketches.gang.saveCanvas('crayon-gang', 'png'));
+for (const key of ['who', 'shot', 'smoke']) document.querySelectorAll(`[data-${key}]`).forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll(`[data-${key}]`).forEach(x => x.classList.toggle('on', x === b));
+  opt[key] = key === 'smoke' ? b.dataset[key] === '1' : b.dataset[key];
+  if (sketches.gang) compose();
+}));
+})();
+
+lazy.gang();
+</script>
+</body>
+</html>
